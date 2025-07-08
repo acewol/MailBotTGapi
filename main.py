@@ -6,8 +6,8 @@ from telegram import Bot
 # Конфигурация
 TOKEN = ""
 CHAT_ID = ""
-EMAIL = "eis@rea.ru"
-PASSWORD = "TIFGUCU"
+EMAIL = ""
+PASSWORD = ""
 IMAP_SERVER = "outlook.office365.com"
 
 bot = Bot(token=TOKEN)
