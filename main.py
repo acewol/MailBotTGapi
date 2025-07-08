@@ -6,9 +6,9 @@ from telegram import Bot
 # Конфигурация
 TOKEN = ""
 CHAT_ID = ""
-EMAIL = ""
-PASSWORD = ""
-IMAP_SERVER = ""
+EMAIL = "eis@rea.ru"
+PASSWORD = "TIFGUCU"
+IMAP_SERVER = "outlook.office365.com"
 
 bot = Bot(token=TOKEN)
 
@@ -27,4 +27,3 @@ def fetch_emails():
         _, msg_data = mail.fetch(e_id, "(RFC822)")
         raw_email = msg_data[0][1]
         msg = email.message_from_bytes(raw_email)
-        
