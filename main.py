@@ -7,16 +7,45 @@ import asyncio
 from telegram import Bot
 import re
 from charset_normalizer import detect
+import pickle
+import os
+
 
 # Конфигурация
 TOKEN = ""
-CHAT_ID = "-1002452807452"
+CHAT_ID = ""
 EMAIL = "eis@rea.ru"
 PASSWORD = ""
 IMAP_SERVER = "mail.rea.ru"
 ALLOWED_SENDER_EMAIL = "no-reply.sspvo@citis.ru"
+CACHE_FILE = "folder_cache.pkl"
 
 bot = Bot(token=TOKEN)
+cached_folder = None
+
+
+def load_cached_folder():
+    global cached_folder
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "rb") as f:
+                cached_folder = pickle.load(f)
+                print(f"Загружен кэш: {cached_folder}")
+        except:
+            print("Ошибка загрузки кэша, будет выполнен новый поиск")
+            cached_folder = None
+    return cached_folder
+
+
+def save_cached_folder(folder_name):
+    global cached_folder
+    cached_folder = folder_name
+    try:
+        with open(CACHE_FILE, "wb") as f:
+            pickle.dump(folder_name, f)
+        print(f"Кэш сохранен: {folder_name}")
+    except:
+        print("Ошибка сохранения кэша")
 
 def decode_folder_name(folder_bytes):
     """Декодирует название папки из IMAP-формата (включая UTF-7)"""
