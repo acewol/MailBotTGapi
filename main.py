@@ -12,13 +12,7 @@ import os
 
 
 # Конфигурация
-TOKEN = ""
-CHAT_ID = ""
-EMAIL = "eis@rea.ru"
-PASSWORD = ""
-IMAP_SERVER = "mail.rea.ru"
-ALLOWED_SENDER_EMAIL = "no-reply.sspvo@citis.ru"
-CACHE_FILE = "folder_cache.pkl"
+
 
 bot = Bot(token=TOKEN)
 cached_folder = None
