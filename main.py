@@ -10,19 +10,18 @@ from charset_normalizer import detect
 import pickle
 import os
 
-
 # Конфигурация
 
 
 bot = Bot(token=TOKEN)
-cached_folder = None
-
+cached_folder = None  # Переменная для кэширования имени папки
 
 def load_cached_folder():
+    """Загружает кэшированное имя папки из файла"""
     global cached_folder
     if os.path.exists(CACHE_FILE):
         try:
-            with open(CACHE_FILE, "rb") as f:
+            with open(CACHE_FILE, 'rb') as f:
                 cached_folder = pickle.load(f)
                 print(f"Загружен кэш: {cached_folder}")
         except:
@@ -30,12 +29,12 @@ def load_cached_folder():
             cached_folder = None
     return cached_folder
 
-
 def save_cached_folder(folder_name):
+    """Сохраняет имя папки в кэш"""
     global cached_folder
     cached_folder = folder_name
     try:
-        with open(CACHE_FILE, "wb") as f:
+        with open(CACHE_FILE, 'wb') as f:
             pickle.dump(folder_name, f)
         print(f"Кэш сохранен: {folder_name}")
     except:
@@ -86,25 +85,39 @@ def extract_email_address(from_header):
     return match.group(1).lower() if match else from_header.lower()
 
 async def fetch_emails():
+    global cached_folder
+    mail = None
     try:
         # Подключение к серверу
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
         mail.login(EMAIL, PASSWORD)
 
-        # Поиск папки "SSPVO"
-        target_folder = find_target_folder(mail, "SSPVO")
-        if not target_folder:
-            print("Не удалось найти папку 'SSPVO'. Проверяем INBOX...")
-            target_folder = "INBOX"
+        # Проверка кэшированной папки
+        if cached_folder:
+            print(f"Проверяем кэшированную папку: {cached_folder}")
+            status, _ = mail.select(f'"{cached_folder}"')
+            if status == "OK":
+                target_folder = cached_folder
+            else:
+                print(f"Кэшированная папка {cached_folder} недоступна, ищем заново...")
+                cached_folder = None
+
+        # Если кэш пустой или папка недоступна, ищем папку
+        if not cached_folder:
+            target_folder = find_target_folder(mail, TARGET_FOLDER_NAME)
+            if not target_folder:
+                print(f"Не удалось найти папку '{TARGET_FOLDER_NAME}'. Проверяем INBOX...")
+                target_folder = "INBOX"
+            save_cached_folder(target_folder)
+            status, _ = mail.select(f'"{target_folder}"')
+            if status != "OK":
+                print(f"Не удалось выбрать папку: {target_folder}")
+                return
 
         print(f"Используем папку: {target_folder}")
-        status, _ = mail.select(f'"{target_folder}"')
-        if status != "OK":
-            print(f"Не удалось выбрать папку: {target_folder}")
-            return
 
-        # Поиск непрочитанных писем
-        status, messages = mail.search(None, "(UNSEEN)")
+        # Поиск непрочитанных писем от конкретного отправителя
+        status, messages = mail.search(None, f'(UNSEEN FROM "{ALLOWED_SENDER_EMAIL}")')
         if status != "OK":
             print("Ошибка при поиске писем")
             return
@@ -146,12 +159,17 @@ async def fetch_emails():
                     message_text = f"✉️ *Письмо от SSPVO*\n\n{body}"
 
                 # Отправка в Telegram (асинхронно)
-                await bot.send_message(
-                    chat_id=CHAT_ID,
-                    text=message_text,
-                    parse_mode="Markdown",
-                    disable_web_page_preview=True
-                )
+                try:
+                    await bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=message_text,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+                    print(f"Сообщение отправлено для письма {e_id}")
+                except Exception as telegram_error:
+                    print(f"Ошибка отправки в Telegram для письма {e_id}: {telegram_error}")
+                    continue
 
                 # Пометить как прочитанное
                 mail.store(e_id, "+FLAGS", "\\Seen")
@@ -162,21 +180,34 @@ async def fetch_emails():
 
     except Exception as e:
         print(f"Ошибка подключения: {e}")
+        # Сбрасываем кэш при ошибке подключения
+        if cached_folder:
+            print("Сбрасываем кэш из-за ошибки подключения")
+            cached_folder = None
+            save_cached_folder(None)
     finally:
         try:
-            mail.close()
-            mail.logout()
+            if mail:
+                mail.close()
+                mail.logout()
         except:
             pass
 
-def schedule_task():
-    """Обертка для вызова асинхронной функции в schedule"""
-    asyncio.run(fetch_emails())
+async def main():
+    """Основная функция для интеграции schedule и asyncio"""
+    # Загрузка кэша при старте
+    load_cached_folder()
 
-# Запуск проверки каждую минуту
-schedule.every(1).minutes.do(schedule_task)
+    # Запуск проверки каждые 2 минуты
+    schedule.every(2).minutes.do(lambda: asyncio.create_task(fetch_emails()))
 
-print("Бот запущен. Поиск папки 'SSPVO'...")
-while True:
-    schedule.run_pending()
-    time.sleep(1)
+    print(f"Бот запущен. Поиск папки '{TARGET_FOLDER_NAME}'...")
+    while True:
+        schedule.run_pending()
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен")
