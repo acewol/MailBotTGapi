@@ -18,7 +18,16 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-
+TOKEN = ""
+CHAT_ID = ""
+EMAIL = ""
+PASSWORD = ""
+IMAP_SERVER = ""
+ALLOWED_SENDER_EMAIL = ""
+CACHE_FILE = ""
+TARGET_FOLDER = ""
+CHECK_INTERVAL = 120  # Увеличим до 2 минут
+MAX_EMAILS = 3  # Ограничим до 3 писем
 
 bot = Bot(token=TOKEN)
 cached_folder = None
