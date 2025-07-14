@@ -3,35 +3,42 @@ import email
 from email.header import decode_header
 import asyncio
 from telegram import Bot
+from telegram.ext import Application
 import re
-from charset_normalizer import detect
 import pickle
 import os
 import logging
 import psutil
 import gc
 import tracemalloc
-import sys
+from collections import deque
+from asyncio import Lock
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-TOKEN = ""
+TOKEN = ""  # Замените на новый токен от BotFather
 CHAT_ID = ""
 EMAIL = ""
 PASSWORD = ""
 IMAP_SERVER = ""
 ALLOWED_SENDER_EMAIL = ""
-CACHE_FILE = ""
-TARGET_FOLDER = ""
-CHECK_INTERVAL = 120  # Увеличим до 2 минут
-MAX_EMAILS = 3  # Ограничим до 3 писем
+CACHE_FILE = "folder_cache.pkl"
+QUEUE_FILE = "delete_queue.pkl"
+TARGET_FOLDER = "INBOX/SSPVO"
+CHECK_INTERVAL = 120  # 2 минуты
+MAX_EMAILS = 3  # Максимум 3 письма за раз
+DELETE_AFTER = 600  # Время жизни сообщения (10 минут)
 
 bot = Bot(token=TOKEN)
 cached_folder = None
 mail_connection = None
+
+# Очередь на удаление сообщений
+delete_queue = deque()
+queue_lock = Lock()
 
 def load_cached_folder():
     global cached_folder
@@ -39,9 +46,9 @@ def load_cached_folder():
         try:
             with open(CACHE_FILE, 'rb') as f:
                 cached_folder = pickle.load(f)
-                logger.info(f"Загружен кэш: {cached_folder}")
+                logger.info(f"Загружен кэш папки: {cached_folder}")
         except Exception as e:
-            logger.error(f"Ошибка загрузки кэша: {e}")
+            logger.error(f"Ошибка загрузки кэша папки: {e}")
             cached_folder = None
     return cached_folder
 
@@ -51,15 +58,52 @@ def save_cached_folder(folder_name):
     try:
         with open(CACHE_FILE, 'wb') as f:
             pickle.dump(folder_name, f)
-        logger.info(f"Кэш сохранен: {folder_name}")
+        logger.info(f"Кэш папки сохранен: {folder_name}")
     except Exception as e:
-        logger.error(f"Ошибка сохранения кэша: {e}")
+        logger.error(f"Ошибка сохранения кэша папки: {e}")
+
+def load_delete_queue():
+    global delete_queue
+    if os.path.exists(QUEUE_FILE):
+        try:
+            with open(QUEUE_FILE, 'rb') as f:
+                loaded_queue = pickle.load(f)
+                current_time = asyncio.get_event_loop().time()
+                # Фильтруем устаревшие сообщения (старше DELETE_AFTER)
+                delete_queue = deque(
+                    (chat_id, msg_id, timestamp)
+                    for chat_id, msg_id, timestamp in loaded_queue
+                    if current_time - timestamp < DELETE_AFTER
+                )
+                logger.info(f"Загружена очередь удаления: {len(delete_queue)} сообщений")
+        except Exception as e:
+            logger.error(f"Ошибка загрузки очереди удаления: {e}")
+            delete_queue = deque()
+    else:
+        logger.info("Файл очереди удаления не найден, инициализируем пустую очередь")
+
+def save_delete_queue():
+    try:
+        with open(QUEUE_FILE, 'wb') as f:
+            pickle.dump(list(delete_queue), f)
+        logger.info(f"Очередь удаления сохранена: {len(delete_queue)} сообщений")
+    except Exception as e:
+        logger.error(f"Ошибка сохранения очереди удаления: {e}")
 
 def extract_email_address(from_header):
     if not from_header:
         return ""
     match = re.search(r'<(.+?)>', from_header)
     return match.group(1).lower() if match else from_header.lower()
+
+async def verify_message_exists(chat_id, message_id):
+    """Проверяет, существует ли сообщение в чате."""
+    try:
+        await bot.get_chat(chat_id=chat_id)  # Проверяем доступ к чату
+        return True
+    except Exception as e:
+        logger.error(f"Сообщение {message_id} в чате {chat_id} недоступно: {e}")
+        return False
 
 async def fetch_emails():
     global mail_connection, cached_folder
@@ -71,7 +115,6 @@ async def fetch_emails():
     start_snapshot = tracemalloc.take_snapshot()
 
     try:
-        # Переподключение при необходимости
         if not mail_connection or not mail_connection.socket:
             if mail_connection:
                 try:
@@ -102,7 +145,7 @@ async def fetch_emails():
             logger.error("Ошибка при поиске писем")
             return
 
-        email_ids = messages[0].split()[:MAX_EMAILS]  # Ограничение числа писем
+        email_ids = messages[0].split()[:MAX_EMAILS]
         for e_id in email_ids:
             try:
                 _, msg_data = mail_connection.fetch(e_id, "(RFC822)")
@@ -128,22 +171,32 @@ async def fetch_emails():
                     body = msg.get_payload(decode=True).decode(errors='ignore')
 
                 code_match = re.search(r'Введите код:\s*(\d{6})', body)
-                message_text = f"🔐 *Новый код SSPVO*\n\nКод: `{code_match.group(1)}`\n\n[Авторизация](http://10.3.60.2/account/user/20191/emailcode)" if code_match else f"✉️ *Письмо от SSPVO*\n\n{body[:500]}"  # Ограничим тело
+                message_text = (
+                    f"🔐 *Новый код SSPVO*\n\nКод: `{code_match.group(1)}`\n\n"
+                    f"[Авторизация](http://10.3.60.2/account/user/20191/emailcode)"
+                    if code_match
+                    else f"✉️ *Письмо от SSPVO*\n\n{body[:500]}"
+                )
 
                 try:
-                    sent_message = await bot.send_message(chat_id=CHAT_ID, text=message_text, parse_mode="Markdown", disable_web_page_preview=True)
-                    logger.info(f"Сообщение отправлено для письма {e_id}")
+                    sent_message = await bot.send_message(
+                        chat_id=CHAT_ID,
+                        text=message_text,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+                    logger.info(f"Отправлено сообщение {sent_message.message_id} для письма {e_id}")
 
-                    # Планируем удаление через 15 минут
-                    asyncio.create_task(delete_after_delay(sent_message.chat_id, sent_message.message_id, delay=15 * 60))
-                    """await bot.send_message(chat_id=CHAT_ID, text=message_text, parse_mode="Markdown", disable_web_page_preview=True)
-                    logger.info(f"Сообщение отправлено для письма {e_id}")"""
+                    async with queue_lock:
+                        delete_queue.append((sent_message.chat_id, sent_message.message_id, asyncio.get_event_loop().time()))
+                        save_delete_queue()
+
                     mail_connection.store(e_id, "+FLAGS", "\\Seen")
+
                 except Exception as telegram_error:
                     logger.error(f"Ошибка отправки в Telegram для письма {e_id}: {telegram_error}")
                     continue
 
-                # Освобождение памяти
                 del msg, raw_email, msg_data, subject, from_, body, message_text, code_match
                 gc.collect()
 
@@ -167,23 +220,49 @@ async def fetch_emails():
                 logger.error(f"Ошибка при закрытии соединения: {e}")
             gc.collect()
 
-    # Анализ утечек памяти
     end_snapshot = tracemalloc.take_snapshot()
     top_stats = end_snapshot.compare_to(start_snapshot, 'lineno')
-    for stat in top_stats[:10]:  # Увеличим до 10 для детализации
+    for stat in top_stats[:10]:
         logger.info(f"Топ утечка памяти: {stat}")
 
-async def delete_after_delay(chat_id, message_id, delay=300):
-    try:
-        await asyncio.sleep(delay)
-        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-        logger.info(f"Удалено сообщение {message_id} из чата {chat_id}")
-    except Exception as e:
-        logger.error(f"Ошибка при удалении сообщения {message_id}: {e}")
+async def auto_delete_messages():
+    """Удаляет сообщения из очереди, если их время жизни истекло."""
+    while True:
+        await asyncio.sleep(CHECK_INTERVAL)
+        now = asyncio.get_event_loop().time()
+        logger.info(f"Запуск auto_delete_messages, размер очереди: {len(delete_queue)}")
+        async with queue_lock:
+            logger.info(f"Содержимое delete_queue: {list(delete_queue)}")
+            while delete_queue and (now - delete_queue[0][2]) >= DELETE_AFTER:
+                chat_id, message_id, _ = delete_queue.popleft()
+                if await verify_message_exists(chat_id, message_id):
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                        logger.info(f"🗑 Удалено сообщение {message_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Не удалось удалить сообщение {message_id}: {e}")
+                else:
+                    logger.info(f"Сообщение {message_id} уже удалено или недоступно")
+                save_delete_queue()
+        logger.info(f"Завершение auto_delete_messages, размер очереди: {len(delete_queue)}")
 
 async def main():
     load_cached_folder()
+    load_delete_queue()
     logger.info(f"Бот запущен. Проверка каждые {CHECK_INTERVAL} секунд, подключение к папке '{TARGET_FOLDER}'...")
+
+    app = Application.builder().token(TOKEN).build()
+
+    await app.initialize()
+    await app.start()
+
+    asyncio.create_task(auto_delete_messages())
+    asyncio.create_task(run_email_loop())
+
+    while True:
+        await asyncio.sleep(3600)
+
+async def run_email_loop():
     while True:
         await fetch_emails()
         await asyncio.sleep(CHECK_INTERVAL)
