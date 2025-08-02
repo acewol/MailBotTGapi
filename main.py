@@ -31,6 +31,8 @@ TARGET_FOLDER = "INBOX/SSPVO"
 CHECK_INTERVAL = 120  # 2 минуты
 MAX_EMAILS = 3  # Максимум 3 письма за раз
 DELETE_AFTER = 600  # Время жизни сообщения (10 минут)
+ALLOWED_DOMAIN = ""
+ALLOWED_URL_PREFIX = ""
 
 bot = Bot(token=TOKEN)
 cached_folder = None
