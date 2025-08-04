@@ -13,20 +13,24 @@ import gc
 import tracemalloc
 from collections import deque
 from asyncio import Lock
+from dotenv import load_dotenv
+
+# загрузка .env
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # === Конфигурация ===
-TOKEN = os.getenv("TELEGRAM_TOKEN", "")       # лучше через env
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
-EMAIL = os.getenv("IMAP_USER", "")
-PASSWORD = os.getenv("IMAP_PASS", "")
-IMAP_SERVER = os.getenv("IMAP_SERVER", "")
-ALLOWED_SENDER_EMAIL = os.getenv("ALLOWED_SENDER_EMAIL", "").lower()
-ALLOWED_DOMAIN = os.getenv("ALLOWED_DOMAIN", "").lower()
-ALLOWED_URL_PREFIX = os.getenv("ALLOWED_URL_PREFIX", "")
+TOKEN               = os.getenv("TELEGRAM_TOKEN", "")
+CHAT_ID             = os.getenv("TELEGRAM_CHAT_ID", "")
+EMAIL               = os.getenv("IMAP_USER", "")
+PASSWORD            = os.getenv("IMAP_PASS", "")
+IMAP_SERVER         = os.getenv("IMAP_SERVER", "")
+ALLOWED_SENDER_EMAIL= os.getenv("ALLOWED_SENDER_EMAIL", "").lower()
+ALLOWED_DOMAIN      = os.getenv("ALLOWED_DOMAIN", "").lower()
+ALLOWED_URL_PREFIX  = os.getenv("ALLOWED_URL_PREFIX", "")
 CACHE_FILE = "folder_cache.pkl"
 QUEUE_FILE = "delete_queue.pkl"
 TARGET_FOLDER = "INBOX/SSPVO"
