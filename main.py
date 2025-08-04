@@ -164,7 +164,8 @@ async def fetch_emails():
                     body = msg.get_payload(decode=True).decode(errors="ignore")
 
                 # 3) Ищем строго код
-                code_match = re.search(r'Введите код:\s*(\d{6})\b', body)
+                pattern = re.compile(r'введите код[:：]?\s*(\d{6})', re.IGNORECASE)
+                code_match = pattern.search(body)
                 if not code_match:
                     logger.warning(f"Письмо {e_id} без корректного кода — пропускаем")
                     mail_connection.store(e_id, "+FLAGS", "\\Seen")
